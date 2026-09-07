@@ -1,0 +1,8 @@
+agent-framework-core>=1.0.0
+agent-framework-openai>=1.0.0
+agent-framework-orchestrations>=1.0.0
+python-dotenv>=1.0.0
+
+# Only needed for Azure OpenAI via Azure AD (DefaultAzureCredential). Not required
+# if you authenticate with AZURE_OPENAI_API_KEY, or aren't using Azure OpenAI at all.
+azure-identity>=1.15.0
