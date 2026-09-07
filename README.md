@@ -14,6 +14,16 @@ topic -> [Researcher] -> [Writer] -> [Editor] -> final text
 
 Under the hood this uses Agent Framework's `SequentialBuilder`, which passes the growing conversation from one agent to the next and returns the last agent's response as the pipeline's output.
 
+The code is split into a thin CLI (`main.py`) and an `agent_pipeline` package that does the actual work:
+
+- `constants.py` — every tunable value in one place: default topic/model, agent names and prompts, environment variable names, and the auth-error markers used for diagnostics.
+- `clients.py` — builds the chat client, auto-selecting OpenAI or Azure OpenAI.
+- `agents.py` — defines the three agents and wires them into a `SequentialBuilder` workflow.
+- `runner.py` — runs the workflow for a given topic and extracts the final text.
+- `errors.py` — turns a raw exception into "does this look like an auth problem?" for friendlier CLI messages.
+
+`main.py` only handles argument parsing, logging setup, and translating pipeline errors into exit codes — it has no orchestration logic of its own.
+
 ## Prerequisites
 
 - Python 3.10 or higher
@@ -67,7 +77,7 @@ The pipeline auto-detects which provider to use: if `AZURE_OPENAI_ENDPOINT` is s
 
 ## Usage
 
-Run the pipeline with the default topic:
+Run with no arguments to get a random sample topic (see `DEFAULT_TOPICS` in `agent_pipeline/constants.py` for the pool it picks from):
 
 ```bash
 python main.py
@@ -81,16 +91,53 @@ python main.py "Summarize recent breakthroughs in battery storage."
 
 The final, edited output is printed to stdout. Non-zero exit codes indicate a configuration problem (e.g. a missing API key) or a failure during the run; see the log output for details.
 
+## Testing
+
+The test suite runs entirely offline — it monkeypatches the OpenAI client so no network call, API key, or Azure resource is ever needed, and no test relies on the others' state. It's also isolated from this project's own `.env`: provider env vars are cleared before every test, and python-dotenv's loading is disabled for the duration of the suite (via `PYTHON_DOTENV_DISABLED`), so a real, working `.env` sitting right here can't leak credentials into a test that's specifically checking what happens when none are configured.
+
+Install the extra test dependencies (on top of `requirements.txt`) and run:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Coverage by module:
+
+- `test_constants.py` — sanity checks on defaults and, especially, the environment variable names (a typo there would silently break provider auto-detection).
+- `test_clients.py` — provider selection (OpenAI vs. Azure OpenAI, Azure takes precedence when both are configured), the missing-key/missing-deployment error messages, the malformed-key warning, and both Azure auth paths (API key and the `DefaultAzureCredential` fallback, including the case where `azure-identity` isn't installed).
+- `test_agents.py` — the workflow is wired Researcher → Writer → Editor, each with its configured instructions, all sharing one chat client.
+- `test_runner.py` — a full mocked pipeline run returns the final agent's text, plus the "no output produced" error path.
+- `test_errors.py` — the auth-error heuristic across direct messages, explicit (`raise ... from`) and implicit exception chains, unrelated errors, and a pathological self-referential chain (must not hang).
+- `test_main.py` — CLI argument defaults/overrides, the random-topic pick, exit codes for success/config-error/auth-error, `Ctrl+C` handling, and the `.env`-isolation regression test described above.
+
 ## Project Structure
 
 ```
 ai-agent-pipeline/
-├── .env.example      # Template for required environment variables
+├── .env.example          # Template for required environment variables
 ├── .gitignore
 ├── LICENSE
 ├── README.md
-├── main.py           # Pipeline definition and CLI entry point
-└── requirements.txt
+├── main.py               # CLI entry point (argument parsing, exit codes)
+├── requirements.txt
+├── requirements-dev.txt  # requirements.txt + pytest, for running the test suite
+├── pytest.ini
+├── agent_pipeline/
+│   ├── __init__.py       # Public API: run_pipeline
+│   ├── constants.py      # Defaults, prompts, env var names, error markers
+│   ├── clients.py        # OpenAI / Azure OpenAI chat client construction
+│   ├── agents.py         # Agent definitions and SequentialBuilder wiring
+│   ├── runner.py         # Executes the workflow, extracts the final output
+│   └── errors.py         # Exception -> friendly-diagnostic heuristics
+└── tests/
+    ├── conftest.py        # Shared fixtures: offline chat client, clean/isolated env
+    ├── test_constants.py
+    ├── test_clients.py
+    ├── test_agents.py
+    ├── test_runner.py
+    ├── test_errors.py
+    └── test_main.py
 ```
 
 ## License
